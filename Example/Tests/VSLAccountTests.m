@@ -6,6 +6,7 @@
 #import <OCMock/OCMock.h>
 #import <VialerPJSIP/pjsua.h>
 #import <VialerSIPLib-iOS/VSLAccount.h>
+#import <VialerSIPLib-iOS/VSLCall.h>
 #import <VialerSIPLib-iOS/VSLEndpoint.h>
 #import <XCTest/XCTest.h>
 
@@ -95,6 +96,40 @@
 
     [self.account configureWithAccountConfiguration:config error:nil];
     [endpointMock stopMocking];
+}
+
+- (void)testAccountCallNumberWillTryToCreateNewCallInstance {
+    id callMock = OCMClassMock([VSLCall class]);
+    OCMExpect(ClassMethod([callMock callNumber:@"42" withAccount:self.account error:[OCMArg anyObjectRef]])).andReturn(nil);
+
+    [self.account callNumber:@"42" withCompletion:^(NSError * _Nullable error, VSLCall * _Nullable outboundCall) {}];
+
+    [callMock verify];
+}
+
+- (void)testAccountCallsNumberWillReturnCorrectCall {
+    VSLCall *testCall = [[VSLCall alloc] init];
+    id callMock = OCMClassMock([VSLCall class]);
+    OCMStub(ClassMethod([callMock callNumber:@"42" withAccount:self.account error:[OCMArg anyObjectRef]])).andReturn(testCall);
+
+    [self.account callNumber:@"42" withCompletion:^(NSError * _Nullable error, VSLCall * _Nullable outboundCall) {
+        XCTAssertEqual(outboundCall, testCall, @"Account should return the correct call");
+    }];
+}
+
+- (void)testCorrectErrorIsReturned {
+    id callMock = OCMClassMock([VSLCall class]);
+    OCMStub(ClassMethod([callMock callNumber:@"42" withAccount:self.account error:[OCMArg anyObjectRef]])).andDo(^(NSInvocation *invocation){
+        NSError *__autoreleasing *anError;
+        [invocation getArgument:&anError atIndex:4];
+        *anError = [NSError errorWithDomain:@"testDomain" code:42 userInfo:nil];
+    }).andReturn(nil);
+
+    [self.account callNumber:@"42" withCompletion:^(NSError * _Nullable error, VSLCall * _Nullable outboundCall) {
+        XCTAssertNotNil(error);
+        NSError *underLyingError = (NSError *)error.userInfo[NSUnderlyingErrorKey];
+        XCTAssertEqualObjects(underLyingError.domain, @"testDomain", @"The underlying error should have been send with the error");
+    }];
 }
 
 - (void)testAccountRegistrationStatusIsInvalidOnDefault {
