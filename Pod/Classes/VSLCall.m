@@ -43,6 +43,7 @@ NSString * const VSLCallDisconnectedNotification = @"VSLCallDisconnectedNotifica
 @property (nonatomic) BOOL connected;
 @property (nonatomic) BOOL userDidHangUp;
 @property (strong, nonatomic) AVAudioPlayer *disconnectedSoundPlayer;
+@property (readwrite, nonatomic) VSLCallTransferState transferStatus;
 
 /**
  *  Stats
@@ -146,7 +147,7 @@ NSString * const VSLCallDisconnectedNotification = @"VSLCallDisconnectedNotifica
 
             } break;
 
-            case VSLCallEarlyState: {
+            case VSLCallStateEarly: {
                 if (!self.incoming) {
                     [self.ringback start];
                 }
@@ -212,6 +213,31 @@ NSString * const VSLCallDisconnectedNotification = @"VSLCallDisconnectedNotifica
     return _disconnectedSoundPlayer;
 }
 
+- (BOOL)transferToCall:(VSLCall *)secondCall {
+    pj_status_t success = pjsua_call_xfer_replaces((pjsua_call_id)self.callId, (pjsua_call_id)secondCall.callId, 0, nil);
+
+    if (success == PJ_SUCCESS) {
+        self.transferStatus = VSLCallTransferStateInitialized;
+        return YES;
+    }
+    return NO;
+}
+
+- (void)callTransferStatusChangedWithStatusCode:(NSInteger)statusCode statusText:(NSString *)text final:(BOOL)final {
+    switch (statusCode) {
+        case PJSIP_SC_TRYING:
+            self.transferStatus = VSLCallTransferStateTrying;
+            DDLogDebug(@"Trying transfer");
+            break;
+        case PJSIP_SC_OK:
+            self.transferStatus = VSLCallTransferStateAccepted;
+            [self hangup:nil];
+            break;
+        default:
+            break;
+    }
+}
+
 - (void)reinvite {
     if (self.callState > VSLCallStateNull && self.callState < VSLCallStateDisconnected) {
         pjsua_call_reinvite((pjsua_call_id)self.callId, PJSUA_CALL_UPDATE_CONTACT, NULL);
@@ -237,7 +263,6 @@ NSString * const VSLCallDisconnectedNotification = @"VSLCallDisconnectedNotifica
 
 - (void)callStateChanged:(pjsua_call_info)callInfo {
     [self updateCallInfo:callInfo];
-    self.callState = (VSLCallState)callInfo.state;
 }
 
 - (void)mediaStateChanged:(pjsua_call_info)callInfo  {
@@ -563,13 +588,17 @@ NSString * const VSLCallDisconnectedNotification = @"VSLCallDisconnectedNotifica
 
         // Get the last part of the uri starting from @
         atSignRange = [string rangeOfString:@"@" options:NSBackwardsSearch];
-        callerHost = [string substringToIndex: atSignRange.location];
-        
-        // Get the telephone part starting from the :
-        semiColonRange = [callerHost rangeOfString:@":" options:NSBackwardsSearch];
-        callerNumber = [callerHost substringFromIndex:semiColonRange.location + 1];
+        if (atSignRange.location != NSNotFound) {
+            callerHost = [string substringToIndex: atSignRange.location];
+
+            // Get the telephone part starting from the :
+            semiColonRange = [callerHost rangeOfString:@":" options:NSBackwardsSearch];
+            if (semiColonRange.location != NSNotFound) {
+                callerNumber = [callerHost substringFromIndex:semiColonRange.location + 1];
+            }
+        }
     }
-    
+
     return @{
              @"caller_name": callerName,
              @"caller_number": callerNumber,
